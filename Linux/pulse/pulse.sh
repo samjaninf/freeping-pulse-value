@@ -8,7 +8,7 @@
 #   DESCRIPTION: Installation and runtime for sending pulses aka heartbeatto a monitoring api
 #                suitable for various Linux systems/distributions
 #
-#          BUGS: https://github.com/cloudradar-monitoring/transmitter/issues
+#          BUGS: https://github.com/cloudradar-monitoring/omc/issues
 #
 #     COPYRIGHT: (c) 2020 by the CloudRadar Team,
 #
@@ -87,15 +87,14 @@ install() {
     fi
     require_root
     echo "Installing Pulse as a daemon"
-    require_var TRANSMITTER_TOKEN
+    require_var OMC_TOKEN
     require_var PULSE_URL
     require_var HOSTNAME
     validate_token
     validate_url
     set_location
+    set_linux_version
     set_description
-    set_useragent
-    send_pulse
     if cp -f $0 $DESTINATION 2>/dev/null; then
         confirm "Installed to ${DESTINATION}"
     else
@@ -125,7 +124,7 @@ create_env_file() {
 #
 # Thanks for using freeping.io
 PULSE_URL=${PULSE_URL}
-TRANSMITTER_TOKEN=${TRANSMITTER_TOKEN}
+OMC_TOKEN=${OMC_TOKEN}
 HOSTNAME=${HOSTNAME}
 DESCRIPTION=\"${DESCRIPTION}\"
 LOCATION=\"${LOCATION}\"" >${ENV_FILE}
@@ -169,23 +168,22 @@ require_var() {
 #   DESCRIPTION:  Check if the token has the expected length of 21 bytes
 #----------------------------------------------------------------------------------------------------------------------
 validate_token() {
-    if [ $(echo -n $TRANSMITTER_TOKEN | wc -c) -ne 21 ]; then
-        abort "Invalid token. TRANSMITTER_TOKEN must have exactly 21 characters."
+    if [ $(echo -n $OMC_TOKEN | wc -c) -ne 21 ]; then
+        abort "Invalid token. OMC_TOKEN must have exactly 21 characters."
     fi
 }
 
 #---  FUNCTION  -------------------------------------------------------------------------------------------------------
-#          NAME:  set_useragent
-#   DESCRIPTION:  Set the USERAGENT variable trying to add some basic information about the running OS
+#          NAME:  set_linux_version
+#   DESCRIPTION:  Set the LINUX_VERSION variable trying to add some basic information about the running OS
 #----------------------------------------------------------------------------------------------------------------------
-set_useragent() {
-    USERAGENT="pulse.sh/"
+set_linux_version() {
     if is_available lsb_release; then
-        USERAGENT=${USERAGENT}$(lsb_release -d -s)
+        LINUX_VERSION=$(lsb_release -d -s)
     elif [ -e /etc/redhat-release ]; then
-        USERAGENT=${USERAGENT}$(cat /etc/redhat-release)
+        LINUX_VERSION=$(cat /etc/redhat-release|sed s/"Linux release "/""/g)
     else
-        USERAGENT=${USERAGENT}$(uname -r -o -m)
+        LINUX_VERSION="Linux "$(uname -r)
     fi
 }
 
@@ -197,9 +195,9 @@ set_description() {
     CPU_MODEL=$(cat /proc/cpuinfo | grep "model name" | sort -u | cut -d':' -f2)
     CPU_NUM=$(cat /proc/cpuinfo | grep -c processor)
     if is_available dmidecode; then
-        DESCRIPTION="Linux host on "$(sudo dmidecode -t 1 | egrep "(Manufacturer|Product Name)" | cut -d':' -f2 | tr -d '\n')
+        DESCRIPTION=${LINUX_VERSION}" on "$(sudo dmidecode -t 1 | egrep "(Manufacturer|Product Name)" | cut -d':' -f2 | tr -d '\n')
     else
-        DESCRIPTION="Linux Host"
+        DESCRIPTION=${LINUX_VERSION}
     fi
     DESCRIPTION=${DESCRIPTION}" ${CPU_NUM} CPU(s) of ${CPU_MODEL}"
 }
@@ -233,13 +231,13 @@ Supported arguments:
     -h  Show this help message
     -i  Install the Pulse.sh script to /usr/local/bin/pulse.sh
         and create a Systemd service so it runs continuously in the background.
-        -u <PULSE_URL> and -t <TRANSMITTER_TOKEN> are mandatory to install the service.
+        -u <PULSE_URL> and -t <OMC_TOKEN> are mandatory to install the service.
     -s  Send a single pulse and exit.
-        -u <PULSE_URL> and -t <TRANSMITTER_TOKEN> are optional. An existing environment is used otherwise.
+        -u <PULSE_URL> and -t <OMC_TOKEN> are optional. An existing environment is used otherwise.
     -r  Uninstall the systemd service file, the configuration and the script itself.
     -d  Daemonize. Executes -s in an endless loop. Command remains in the foreground.
     -u  <PULSE_URL> of the monitoring API the pulse is send to.
-    -t  <TRANSMITTER_TOKEN> to authenticate the request.
+    -t  <OMC_TOKEN> to authenticate the request.
 
 Example:
     ./pulse.sh -i -u https://pulse.freeping.io -t Tp_UDKR6nLhEfAR_k01QI
@@ -260,7 +258,7 @@ finish() {
 #  Look at ${ENV_FILE}. Maybe you want to optimize it.
 #
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-#  Give us a star on https://github.com/cloudradar-monitoring/transmitter
+#  Give us a star on https://github.com/cloudradar-monitoring/omc
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 #
 #
@@ -286,7 +284,7 @@ Thanks for using
 send_pulse() {
     for i in $(seq 1 3); do
         response=$(curl -sSf -X POST ${PULSE_URL} \
-            --header "transmitter: ${TRANSMITTER_TOKEN}" \
+            --header "omc_token: ${OMC_TOKEN}" \
             -m 2 \
             -A "${USERAGENT}" \
             -F "hostname=${HOSTNAME}" \
@@ -303,8 +301,9 @@ send_pulse() {
 #----------------------------------------------------------------------------------------------------------------------
 send() {
     . ${ENV_FILE}
-    set_useragent
-    require_var TRANSMITTER_TOKEN
+    set_linux_version
+    USERAGENT="pulse.sh/"${LINUX_VERSION}
+    require_var OMC_TOKEN
     require_var PULSE_URL
     send_pulse
 }
@@ -315,9 +314,10 @@ send() {
 #----------------------------------------------------------------------------------------------------------------------
 daemonize() {
     . ${ENV_FILE}
-    require_var TRANSMITTER_TOKEN
+    require_var OMC_TOKEN
     require_var PULSE_URL
-    set_useragent
+    set_linux_version
+    USERAGENT="pulse.sh/"${LINUX_VERSION}
     while true; do
         send_pulse
         # Do not set the sleep below 30 seconds.
@@ -372,7 +372,7 @@ while getopts 'hfirdt:u:x' opt; do
     i) ACTION=install ;;
     r) ACTION=uninstall ;;
     d) ACTION=daemonize ;;
-    t) TRANSMITTER_TOKEN=${OPTARG} ;;
+    t) OMC_TOKEN=${OPTARG} ;;
     u) PULSE_URL=${OPTARG} ;;
     # Execute a single function. For dev and debug only  #
     x) ACTION=$2 ;;

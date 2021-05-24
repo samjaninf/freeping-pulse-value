@@ -4,7 +4,7 @@
 #
 #   DESCRIPTION: A script that sends pulses aka heartbeats to a monitoring API
 #
-#          BUGS: https://github.com/cloudradar-monitoring/transmitter/issues
+#          BUGS: https://github.com/cloudradar-monitoring/omc/issues
 #
 #     COPYRIGHT: (c) 2021 by the CloudRadar Team,
 #
@@ -12,15 +12,17 @@
 #  ORGANIZATION: cloudradar GmbH, Potsdam, Germany (cloudradar.io)
 #       CREATED: 01/05/2021
 #======================================================================================================================
+#Requires -RunAsAdministrator
 # Catch the paramters passed on the command line to tis script
 param (
     [switch]$Install = $false,
     [switch]$Force = $false,
     [switch]$Daemonize = $false,
-    [string]$PulseUrl = "http://pulse.freeping.local",
+    [string]$PulseUrl = "",
     [string]$Token = ""
 )
 $Location = Get-Location
+$InstallDir = "$( $Env:Programfiles )\FreepingPulse"
 function Send-Pulse {
     <#
     .SYNOPSIS
@@ -41,7 +43,7 @@ function Send-Pulse {
             "description" = $config.description
         }|ConvertTo-Json
         Headers = @{
-            "transmitter" = $config.transmitter_token
+            "omc_token" = $config.omc_token
         }
         TimeoutSec = 2
     }
@@ -62,7 +64,7 @@ function Send-Pulse {
             Write-Host "StatusCode:" $_.Exception.Response.StatusCode.value__
             Write-Host $_
             if (401 -eq $_.Exception.Response.StatusCode.value__) {
-                Write-Host "Please check the transmitter token in your config."
+                Write-Host "Please check the omc token in your config."
                 break
             }
             elseif(429 -eq $_.Exception.Response.StatusCode.value__) {
@@ -80,12 +82,11 @@ function Register-As-Service {
     .SYNOPSIS
         Register this script as a service sending the pulse every 30 seconds.
     #>
-    Write-Host "Registering scheduled task"
+    Write-Host "** Registering pulse.ps1 as a windows service"
     if ($false -eq ([environment]::OSVersion.VersionString).StartsWith("Microsoft Windows")) {
         Write-Error -Msg "Registering pulse.ps1 as a service is only supported on Microsoft Windows." -Exit
     }
     # Create the directory
-    $InstallDir = "$( $Env:Programfiles )\FreepingPulse"
     if (-not(Test-Path $InstallDir)) {
         mkdir $InstallDir| Out-Null
     }
@@ -95,7 +96,7 @@ function Register-As-Service {
     $NssmDownloadUrl = "https://nssm.cc/release/nssm-2.24.zip"
     $NssmSha1 = "BE7B3577C6E3A280E5106A9E9DB5B3775931CEFC"
     $file = "nssm-2.24.zip"
-    Write-Host "Downloading  $( $NssmDownloadUrl )"
+    Write-Host "** Downloading Service Manager $( $NssmDownloadUrl )"
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $NssmDownloadUrl -OutFile $file
@@ -105,7 +106,7 @@ function Register-As-Service {
     Expand-Archive -Path $file -DestinationPath .
     Copy-Item -Path ./nssm-2.24/win64/nssm.exe -Destination .
     Remove-Item nssm-2.24* -Recurse -Force
-    Write-Host "nssm.exe downloaded successfully."
+    Write-Host "** Service Manager downloaded successfully."
     $serviceName = 'Pulse'
     $arguments = '-ExecutionPolicy Bypass -NoProfile -File pulse.ps1 -Daemonize'
     & ./nssm install $serviceName powershell $arguments
@@ -129,36 +130,49 @@ function Get-Host-Name {
     return [Environment]::MachineName
 }
 
-function Get-Location {
+function Get-GeoLocation {
+    <#
+    .SYNOPSIS
+        Retrieve the country and city of current external IP address.
+    #>
     $geoUrl = "http://ip-api.com/json/?fields=country,city"
     try {
         $geoData = Invoke-RestMethod -Uri $geoUrl -TimeoutSec 2
-        $Location = "{0}/{1}" -f $geoData.country, $geoData.city
+        $GeoLocation = "{0}/{1}" -f $geoData.country, $geoData.city
     }
     catch {
-        $Location = "Location not set"
+        $GeoLocation = "Location not set"
     }
-    return $Location
+    return $GeoLocation
 }
 
 function Get-Description {
-    try {
-        $os = (Get-WmiObject -class Win32_OperatingSystem).Caption
-    }
-    catch {
-        $os = "Unknown Os"
-    }
+    <#
+    .SYNOPSIS
+        Generate a short discription of the host including some base information about the (virtual) hardware.
+    #>
+    $ComputerInfo = Get-Computerinfo -Property "Cs*"
+
     try {
         $ip = (Get-NetIPAddress -AddressFamily IPv4).IPAddress|Select-Object -first 1
     }
     catch {
         $ip = "Unknown IP Address"
     }
-    return "{0}/{1}" -f $os, $ip
-
+    return "{0}/{1},{2}/{3} CPU(s) of {4}/{5}" -f `
+    (Get-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").GetValue('ProductName'),`
+    $ComputerInfo.CsManufacturer,`
+    $ComputerInfo.CsModel,`
+    $ComputerInfo.CsNumberOfProcessors,`
+    $ComputerInfo.CsProcessors[0].name,`
+    $ip
 }
 
 function Write-Error {
+    <#
+    .SYNOPSIS
+        Write an error to the console. Optionally abort the script.
+    #>
     param(
         [string]$msg = "",
         [switch]$Exit = $false
@@ -181,6 +195,12 @@ function Write-Config {
     elseif($Token.length -ne 21) {
         Write-Error -Msg "The provided token is invalid." -Exit
     }
+    if($PulseUrl.Length -eq 0) {
+        Write-Error -Msg "You must provide the Pulse URL using '-PulseUrl <URL>'" -Exit
+    }
+    if($PulseUrl -notmatch '^http[s]{0,1}://') {
+        Write-Error -Msg "Invalid Pulse URL. Use http(s)://sub.example.com" -Exit
+    }
     $config = @(
     "# Pulse.ps1 configuration file",
     "# This is an auto-generated configuration.",
@@ -190,10 +210,10 @@ function Write-Config {
     "# ",
     "# Thanks for using freeping.io",
     "pulse_url = $( $PulseUrl )",
-    "transmitter_token = $( $Token )",
+    "omc_token = $( $Token )",
     "hostname =  $( Get-Host-Name )",
     "description = $( Get-Description )",
-    "location = $( Get-Location )"
+    "location = $( Get-GeoLocation )"
     )
     $config -join "`r`n"|Out-File -encoding utf8 ./pulse.cfg
 }
@@ -242,8 +262,10 @@ function Finish {
 #
 #  You are now sending pulses to $($PulseUrl)
 #
+#  Look at $($InstallDir)\.pulse.cfg and change to your needs.
+#
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-#  Give us a star on https://github.com/cloudradar-monitoring/transmitter
+#  Give us a star on https://github.com/cloudradar-monitoring/omc
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 #
 #
@@ -264,9 +286,6 @@ Thanks for using
 
 if ($Install) {
     Write-Config
-    if ((Send-Pulse) -ne $true) {
-        Exit 1
-    }
     Register-As-Service
     exit 0
 }
