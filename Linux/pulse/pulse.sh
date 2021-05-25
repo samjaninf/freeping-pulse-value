@@ -96,6 +96,7 @@ install() {
     set_linux_version
     set_description
     if cp -f $0 $DESTINATION 2>/dev/null; then
+        chmod +x $DESTINATION
         confirm "Installed to ${DESTINATION}"
     else
         abort "Failed to install to ${DESTINATION}"
