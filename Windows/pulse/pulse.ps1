@@ -148,7 +148,7 @@ function Register-As-Service {
 }
 
 function Get-Host-Name {
-    return [Environment]::MachineName
+    return (Invoke-Expression -Command hostname)
 }
 
 function Get-GeoLocation {
