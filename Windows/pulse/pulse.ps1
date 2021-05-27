@@ -51,8 +51,8 @@ function Send-Pulse {
     # Send the pulse, retry twice on failures
     for($i = 1; $i -le 3; $i++) {
         try {
-            $response = Invoke-RestMethod @request
-            if ("True" -eq $response.success) {
+            $response = Invoke-WebRequest @request
+            if (($response.StatusCode -gt 199) -and ($response.StatusCode -lt 300)) {
                 return $true
                 break
             }
