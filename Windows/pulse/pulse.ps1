@@ -21,7 +21,7 @@ param (
     [string]$PulseUrl = "",
     [string]$Token = ""
 )
-# Allow TLS, need for systems older than Server 2019
+# Allow TLS, needed for systems older than Server 2019
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Location = Get-Location
@@ -80,6 +80,23 @@ function Send-Pulse {
     return $false
 }
 
+function Unzip {
+    param(
+        [Parameter(Mandatory=$true)][String] $Path,
+        [Parameter(Mandatory=$true)][String] $DestinationPath
+    )
+    Write-Host "** Extracting $($Path) to $($DestinationPath)"
+    if (Get-Command Expand-Archive -errorAction SilentlyContinue) {
+        Expand-Archive -Path $Path -DestinationPath $DestinationPath -Force
+    }
+    else
+    {
+        # Use a fallback for old powershells < 5
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath)
+    }
+}
+
 function Register-As-Service {
     <#
     .SYNOPSIS
@@ -93,26 +110,26 @@ function Register-As-Service {
     if (-not(Test-Path $InstallDir)) {
         mkdir $InstallDir| Out-Null
     }
+    Write-Host "** Installing pulse.ps1 to $($InstallDir)"
     Copy-Item -Path ./pulse.ps1 -Destination $InstallDir -Force
     Move-Item -Path ./pulse.cfg -Destination $InstallDir -Force
     Set-Location $InstallDir
     $NssmDownloadUrl = "https://nssm.cc/release/nssm-2.24.zip"
     $NssmSha1 = "BE7B3577C6E3A280E5106A9E9DB5B3775931CEFC"
-    $file = "nssm-2.24.zip"
+    $file = ("{0}\{1}" -f $InstallDir,"nssm-2.24.zip")
     Write-Host "** Downloading Service Manager $( $NssmDownloadUrl )"
     $ProgressPreference = 'SilentlyContinue'
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $NssmDownloadUrl -OutFile $file
     if ((Get-FileHash $file -Algorithm "SHA1").hash -ne $NssmSha1) {
         Write-Error -Msg "Integraty check of downloaded $( $file ) failed." -Exit
     }
-    Expand-Archive -Path $file -DestinationPath .
-    Copy-Item -Path ./nssm-2.24/win64/nssm.exe -Destination .
-    Remove-Item nssm-2.24* -Recurse -Force
+    Unzip -Path $file -DestinationPath $InstallDir
+    Copy-Item -Path $InstallDir"\nssm-2.24\win64\nssm.exe" -Destination $InstallDir
+    Remove-Item $InstallDir"\nssm-2.24*" -Recurse -Force
     Write-Host "** Service Manager downloaded successfully."
     $serviceName = 'Pulse'
-    $arguments = '-ExecutionPolicy Bypass -NoProfile -File pulse.ps1 -Daemonize'
-    & ./nssm install $serviceName powershell $arguments
+    $arguments = "-ExecutionPolicy Bypass -NoProfile -File pulse.ps1 -Daemonize"
+    & ./nssm install $serviceName powershell "$arguments"
     & ./nssm status $serviceName
     & ./nssm set $serviceName AppDirectory $InstallDir
     & ./nssm set $serviceName Description "Sends a pulse to https://freeping.io"
@@ -154,16 +171,22 @@ function Get-Description {
     .SYNOPSIS
         Generate a short discription of the host including some base information about the (virtual) hardware.
     #>
-    $ComputerInfo = Get-Computerinfo -Property "Cs*"
-
     try {
         $ip = (Get-NetIPAddress -AddressFamily IPv4).IPAddress|Select-Object -first 1
     }
     catch {
         $ip = "Unknown IP Address"
     }
+    $ProductName = (Get-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").GetValue('ProductName')
+
+    if (Get-Command Get-Computerinfo -errorAction SilentlyContinue) {
+        $ComputerInfo = Get-Computerinfo -Property "Cs*"
+    }
+    else {
+        return "{0}/{1}" -f $ProductName, $ip
+    }
     return "{0}/{1},{2}/{3} CPU(s) of {4}/{5}" -f `
-    (Get-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").GetValue('ProductName'),`
+    $ProductName,`
     $ComputerInfo.CsManufacturer,`
     $ComputerInfo.CsModel,`
     $ComputerInfo.CsNumberOfProcessors,`
