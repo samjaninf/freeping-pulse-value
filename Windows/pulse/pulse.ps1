@@ -21,6 +21,9 @@ param (
     [string]$PulseUrl = "",
     [string]$Token = ""
 )
+# Allow TLS, need for systems older than Server 2019
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 $Location = Get-Location
 $InstallDir = "$( $Env:Programfiles )\FreepingPulse"
 function Send-Pulse {
