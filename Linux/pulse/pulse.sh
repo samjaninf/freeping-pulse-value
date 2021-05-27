@@ -180,9 +180,9 @@ validate_token() {
 #----------------------------------------------------------------------------------------------------------------------
 set_linux_version() {
     if is_available lsb_release; then
-        LINUX_VERSION=$(lsb_release -d -s)
+        LINUX_VERSION=$(lsb_release -d -s|tr -d \")
     elif [ -e /etc/redhat-release ]; then
-        LINUX_VERSION=$(cat /etc/redhat-release|sed s/"Linux release "/""/g)
+        LINUX_VERSION=$(cat /etc/redhat-release)
     else
         LINUX_VERSION="Linux "$(uname -r)
     fi
@@ -195,12 +195,13 @@ set_linux_version() {
 set_description() {
     CPU_MODEL=$(cat /proc/cpuinfo | grep "model name" | sort -u | cut -d':' -f2)
     CPU_NUM=$(cat /proc/cpuinfo | grep -c processor)
+    MEMORY=$(grep MemTotal /proc/meminfo |awk '{print $2/1024/1024"GB RAM"}')
     if is_available dmidecode; then
-        DESCRIPTION=${LINUX_VERSION}" on "$(sudo dmidecode -t 1 | egrep "(Manufacturer|Product Name)" | cut -d':' -f2 | tr -d '\n')
+        DESCRIPTION=${LINUX_VERSION}"/ $(dmidecode -t 1 | egrep "(Manufacturer|Product Name)" | cut -d':' -f2 | tr -d '\n')"
     else
         DESCRIPTION=${LINUX_VERSION}
     fi
-    DESCRIPTION=${DESCRIPTION}" ${CPU_NUM} CPU(s) of ${CPU_MODEL}"
+    DESCRIPTION=${DESCRIPTION}"/ ${CPU_NUM} CPU(s) of ${CPU_MODEL}/ ${MEMORY}"
 }
 
 #---  FUNCTION  -------------------------------------------------------------------------------------------------------
@@ -213,7 +214,7 @@ validate_url() {
     else
         abort "Invalid PULSE_URL ${PULSE_URL}. Use scheme http(s)://my.example.com"
     fi
-    if curl -fsSI -m3 ${PULSE_URL} >/dev/null 2>&1; then
+    if curl -sSI -m3 ${PULSE_URL} >/dev/null 2>&1; then
         confirm "PULSE_URL is valid"
     else
         abort "Invalid PULSE_URL"
@@ -285,7 +286,7 @@ Thanks for using
 send_pulse() {
     for i in $(seq 1 3); do
         response=$(curl -sSf -X POST ${PULSE_URL} \
-            --header "omc_token: ${OMC_TOKEN}" \
+            --header "omc-token: ${OMC_TOKEN}" \
             -m 2 \
             -A "${USERAGENT}" \
             -F "hostname=${HOSTNAME}" \
