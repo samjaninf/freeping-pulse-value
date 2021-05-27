@@ -54,7 +54,7 @@ function Send-Pulse {
     # Send the pulse, retry twice on failures
     for($i = 1; $i -le 3; $i++) {
         try {
-            $response = Invoke-WebRequest @request
+            $response = Invoke-WebRequest @request -UseBasicParsing
             if (($response.StatusCode -gt 199) -and ($response.StatusCode -lt 300)) {
                 return $true
                 break
@@ -134,6 +134,7 @@ function Register-As-Service {
     & ./nssm set $serviceName AppDirectory $InstallDir
     & ./nssm set $serviceName Description "Sends a pulse to https://freeping.io"
     & ./nssm set $serviceName DisplayName "Pulse by freeping.io"
+    & ./nssm set $serviceName AppStderr "$($InstallDir)\pulse-error.log"
     Write-Uninstaller
     Set-Location $Location
     & sc.exe failure Pulse reset=30 actions=restart/5000
@@ -270,11 +271,12 @@ function Write-Uninstaller {
      #>
     @(
     "echo off",
-    "echo Removing Freeping Pulse now",
-    "ping -n 5 127.0.0.1 > null",
-    "sc stop Pulse",
-    '"%PROGRAMFILES%"\FreepingPulse\nssm.exe remove Pulse confirm'
     "cd C:\",
+    "echo Removing Freeping Pulse now",
+    "ping -n 2 127.0.0.1 > null",
+    "sc stop Pulse",
+    "ping -n 3 127.0.0.1 > null"
+    '"%PROGRAMFILES%"\FreepingPulse\nssm.exe remove Pulse confirm'
     'rmdir /S /Q "%PROGRAMFILES%"\FreepingPulse\',
     "echo Freeping Pulse removed",
     "ping -n 2 127.0.0.1 > null"
