@@ -43,7 +43,7 @@ function Send-Pulse {
             "description" = $config.description
         }|ConvertTo-Json
         Headers = @{
-            "omc_token" = $config.omc_token
+            "omc-token" = $config.omc_token
         }
         TimeoutSec = 2
     }
